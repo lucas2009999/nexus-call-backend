@@ -1,0 +1,17 @@
+{
+  "name": "nexus-call-backend",
+  "version": "1.0.0",
+  "description": "Servidor de sinalização WebRTC (WebSocket) para o NEXUS Call. Não transmite áudio/vídeo — só troca mensagens de sinalização entre os participantes de uma sala.",
+  "main": "server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0",
+    "dotenv": "^16.4.5"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

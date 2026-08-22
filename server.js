@@ -17,7 +17,9 @@ const { WebSocketServer } = require('ws');
 
 const PORT = process.env.PORT || 8080;
 const MAX_ROOM_PARTICIPANTS = parseInt(process.env.MAX_ROOM_PARTICIPANTS || '12', 10);
-const MAX_MESSAGE_SIZE = 64 * 1024; // 64KB - mensagens de sinalização são pequenas
+const MAX_MESSAGE_SIZE = 200 * 1024; // 200KB - já cobre o avatar (miniatura) em base64
+const MAX_AVATAR_LENGTH = 150 * 1024; // limite do texto base64 do avatar
+const MAX_CHAT_LENGTH = 500;
 
 // room code -> Map(clientId -> { ws, name, muted, sharingScreen })
 const rooms = new Map();
@@ -54,7 +56,13 @@ function participantsList(roomCode) {
     name: c.name,
     muted: c.muted,
     sharingScreen: c.sharingScreen,
+    avatar: c.avatar || null,
   }));
+}
+
+function isValidAvatar(avatar) {
+  if (avatar === null || avatar === undefined) return true;
+  return typeof avatar === 'string' && avatar.startsWith('data:image/') && avatar.length <= MAX_AVATAR_LENGTH;
 }
 
 function removeClient(roomCode, clientId) {
@@ -103,21 +111,21 @@ wss.on('connection', (ws) => {
 
     switch (msg.type) {
       case 'create-room': {
-        if (!isValidName(msg.name)) {
-          send(ws, { type: 'error', message: 'Nome inválido.' });
+        if (!isValidName(msg.name) || !isValidAvatar(msg.avatar)) {
+          send(ws, { type: 'error', message: 'Nome ou foto de perfil inválidos.' });
           return;
         }
         const roomCode = generateRoomCode();
         rooms.set(roomCode, new Map());
-        rooms.get(roomCode).set(clientId, { ws, name: msg.name.trim(), muted: false, sharingScreen: false });
+        rooms.get(roomCode).set(clientId, { ws, name: msg.name.trim(), muted: false, sharingScreen: false, avatar: msg.avatar || null });
         currentRoom = roomCode;
         send(ws, { type: 'room-created', roomCode, selfId: clientId, participants: participantsList(roomCode) });
         break;
       }
 
       case 'join-room': {
-        if (!isValidName(msg.name) || !isValidRoomCode(msg.roomCode)) {
-          send(ws, { type: 'error', message: 'Código de sala ou nome inválido.' });
+        if (!isValidName(msg.name) || !isValidRoomCode(msg.roomCode) || !isValidAvatar(msg.avatar)) {
+          send(ws, { type: 'error', message: 'Código de sala, nome ou foto de perfil inválidos.' });
           return;
         }
         const room = rooms.get(msg.roomCode);
@@ -130,9 +138,27 @@ wss.on('connection', (ws) => {
           return;
         }
         currentRoom = msg.roomCode;
-        room.set(clientId, { ws, name: msg.name.trim(), muted: false, sharingScreen: false });
+        room.set(clientId, { ws, name: msg.name.trim(), muted: false, sharingScreen: false, avatar: msg.avatar || null });
         send(ws, { type: 'room-joined', roomCode: currentRoom, selfId: clientId, participants: participantsList(currentRoom) });
-        broadcastToRoom(currentRoom, { type: 'participant-joined', id: clientId, name: msg.name.trim() }, clientId);
+        broadcastToRoom(currentRoom, { type: 'participant-joined', id: clientId, name: msg.name.trim(), avatar: msg.avatar || null }, clientId);
+        break;
+      }
+
+      case 'chat-message': {
+        if (!currentRoom) return;
+        if (typeof msg.text !== 'string') return;
+        const text = msg.text.trim().slice(0, MAX_CHAT_LENGTH);
+        if (!text) return;
+        const room = rooms.get(currentRoom);
+        const self = room && room.get(clientId);
+        if (!self) return;
+        broadcastToRoom(currentRoom, {
+          type: 'chat-message',
+          id: clientId,
+          name: self.name,
+          text,
+          timestamp: Date.now(),
+        }, clientId);
         break;
       }
 
